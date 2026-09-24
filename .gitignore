@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+# playwright cache
+.cache
+# papers
+papers/
+ieee_cookies.txt
+ieee_raw.json
+ieee_papers.jsonl
+download_state.jsonl
+.env

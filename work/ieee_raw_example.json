@@ -1,0 +1,147 @@
+{
+    "total_records": 1,
+    "total_searched": 7419199,
+    "articles": [
+        {
+            "doi": "10.1109/TCSII.2015.2415631",
+            "title": "A Hybrid-Domain Two-Step Time-to-Digital Converter Using a Switch-Based Time-to-Voltage Converter and SAR ADC",
+            "publisher": "IEEE",
+            "issue": "7",
+            "issn": "1558-3791",
+            "rank": 1,
+            "volume": "62",
+            "authors": {
+                "authors": [
+                    {
+                        "affiliation": "Department of Electrical Engineering, College of Information Science and Technology, Samsung Electronics, Hwasung, Korea",
+                        "authorUrl": "https://ieeexplore.ieee.org/author/37293497700",
+                        "id": 37293497700,
+                        "full_name": "Jungho Kim",
+                        "author_order": 1,
+                        "authorAffiliations": {
+                            "authorAffiliation": [
+                                "Department of Electrical Engineering, College of Information Science and Technology, Samsung Electronics, Hwasung, Korea"
+                            ]
+                        }
+                    },
+                    {
+                        "affiliation": "Department of Electrical Engineering, College of Information Science and Technology, Korea Advanced Institute of Science and Technology, Daejeon, Korea",
+                        "authorUrl": "https://ieeexplore.ieee.org/author/37406972800",
+                        "id": 37406972800,
+                        "full_name": "Young-Hwa Kim",
+                        "author_order": 2,
+                        "authorAffiliations": {
+                            "authorAffiliation": [
+                                "Department of Electrical Engineering, College of Information Science and Technology, Korea Advanced Institute of Science and Technology, Daejeon, Korea"
+                            ]
+                        }
+                    },
+                    {
+                        "affiliation": "Broadcom Corporation, Irvine, CA, USA",
+                        "authorUrl": "https://ieeexplore.ieee.org/author/37085396758",
+                        "id": 37085396758,
+                        "full_name": "KwangSeok Kim",
+                        "author_order": 3,
+                        "authorAffiliations": {
+                            "authorAffiliation": [
+                                "Broadcom Corporation, Irvine, CA, USA"
+                            ]
+                        }
+                    },
+                    {
+                        "affiliation": "Department of Electrical Engineering, College of Information Science and Technology, Korea Advanced Institute of Science and Technology, Daejeon, Korea",
+                        "authorUrl": "https://ieeexplore.ieee.org/author/38066427000",
+                        "id": 38066427000,
+                        "full_name": "Wonsik Yu",
+                        "author_order": 4,
+                        "authorAffiliations": {
+                            "authorAffiliation": [
+                                "Department of Electrical Engineering, College of Information Science and Technology, Korea Advanced Institute of Science and Technology, Daejeon, Korea"
+                            ]
+                        }
+                    },
+                    {
+                        "affiliation": "Department of Electrical Engineering, College of Information Science and Technology, Korea Advanced Institute of Science and Technology, Daejeon, Korea",
+                        "authorUrl": "https://ieeexplore.ieee.org/author/37281326300",
+                        "id": 37281326300,
+                        "full_name": "SeongHwan Cho",
+                        "author_order": 5,
+                        "authorAffiliations": {
+                            "authorAffiliation": [
+                                "Department of Electrical Engineering, College of Information Science and Technology, Korea Advanced Institute of Science and Technology, Daejeon, Korea"
+                            ]
+                        }
+                    }
+                ]
+            },
+            "access_type": "LOCKED",
+            "content_type": "Journals",
+            "abstract": "In this brief, an energy-efficient time-to-digital converter (TDC) using a hybrid of time- and voltage-domain circuits is presented. The proposed TDC operates in two steps, i.e., first in the time domain by using a delay-line TDC and then in the voltage domain by using a successive-approximation-register analog-to-digital converter. The time residue of the first stage is converted to voltage by using a switch-based time-to-voltage converter (TVC) that eliminates the need for a current source with large output impedance. To improve the linearity of the proposed TVC, pseudodifferential time-domain signaling is presented. A prototype chip fabricated in the 65-nm CMOS achieves 630 fs of time resolution at 120 megasamples/s while consuming 3.7 mW from a 1.2-V supply. The figure of merit is 244 fJ/conversion-step, which is the best among the recently published high-speed TDCs.",
+            "article_number": "7065247",
+            "pdf_url": "https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=7065247",
+            "html_url": "https://ieeexplore.ieee.org/document/7065247/",
+            "abstract_url": "https://ieeexplore.ieee.org/document/7065247/",
+            "publication_title": "IEEE Transactions on Circuits and Systems II: Express Briefs",
+            "publication_number": 8920,
+            "is_number": 7134813,
+            "publication_year": 2015,
+            "publication_date": "July 2015",
+            "start_page": "631",
+            "end_page": "635",
+            "citing_paper_count": 27,
+            "citing_patent_count": 4,
+            "download_count": 7208,
+            "insert_date": "20150323",
+            "index_terms": {
+                "ieee_terms": {
+                    "terms": [
+                        "Switches",
+                        "Time-domain analysis",
+                        "Linearity",
+                        "Capacitors",
+                        "Timing",
+                        "Harmonic analysis",
+                        "Circuits and systems"
+                    ]
+                },
+                "author_terms": {
+                    "terms": [
+                        "Time-to-digital converter (TDC)",
+                        "SAR",
+                        "time-tovoltage converter",
+                        "time-domain",
+                        "nonidealities",
+                        "Nonidealities",
+                        "successive approximation register (SAR)",
+                        "time domain",
+                        "time-to-digital converter (TDC)",
+                        "time-to-voltage converter (TVC)"
+                    ]
+                },
+                "dynamic_index_terms": {
+                    "terms": [
+                        "Time-to-digital Converter",
+                        "Time Domain",
+                        "Time Resolution",
+                        "Current Source",
+                        "Current Regulations",
+                        "Analog-to-digital Converter",
+                        "Analog-to-digital",
+                        "Digital-to-analog Converter",
+                        "Figure Of Merit",
+                        "65-nm CMOS",
+                        "Energy Efficiency",
+                        "Power Consumption",
+                        "Block Diagram",
+                        "Parasitic Capacitance",
+                        "Large Gain",
+                        "Delay Line",
+                        "Conventional Circuit",
+                        "Maximum Energy Efficiency"
+                    ]
+                }
+            },
+            "license": "IEEE"
+        }
+    ]
+}
