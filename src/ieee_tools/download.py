@@ -2,12 +2,10 @@
 Download PDFs from IEEE Xplore, using institutional cookies.
 
 Paper list is a JSONL file (one article metadata object per line, as
-produced by ieee_search.py -> work/ieee_papers.jsonl). Two identifier
-modes are selected with ID_TYPE in the user configuration below:
-  - arnumber: download directly by article_number (default)
-  - doi:     key and name the PDF by DOI; the arnumber is taken from the
-             JSONL metadata when present and otherwise resolved via
-             doi.org (Crossref as fallback) first
+produced by search.py -> work/ieee_papers.jsonl). Every IEEE paper has
+an article_number, so downloads and PDF filenames always use the arnumber.
+A DOI, when present, is kept for reference only; a --doi given on the CLI is
+resolved to its arnumber before download.
 
 Two engines share a single download pipeline:
   - httpx:      fast plain-HTTP client
@@ -19,12 +17,15 @@ Behavior:
   - Use --retry-failed to process only previously failed items.
   - Use --force to re-download everything.
 
-Examples:
-  python ieee_papers_download.py
-  python ieee_papers_download.py --jsonl work/ieee_papers.jsonl --out-dir papers --limit 5
-  python ieee_papers_download.py --jsonl work/ieee_papers.jsonl --engine httpx
-  python ieee_papers_download.py --retry-failed
-  python ieee_papers_download.py --force
+Examples (run from the repo root):
+  uv run ieee-tools download
+  uv run ieee-tools download --limit 5
+  uv run ieee-tools download --engine httpx
+  uv run ieee-tools download --arnumber 11617481,11526779
+  uv run ieee-tools download --doi 10.1109/JSSC.2026.3693653
+  uv run ieee-tools download --url https://ieeexplore.ieee.org/document/11617481
+  uv run ieee-tools download --retry-failed
+  uv run ieee-tools download --force
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ import re
 import sys
 import time
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -51,22 +52,15 @@ import httpx
 
 # --- 目录与文件 -------------------------------------------------
 
-PROJECT_ROOT = Path(__file__).resolve().parents[0]
+# download.py lives at <repo>/src/ieee_tools/download.py -> parents[2] is repo root.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORK_DIR = PROJECT_ROOT / "work"
 CONFIG_DIR = PROJECT_ROOT / "config"
-PAPERS_DIR = PROJECT_ROOT / "papers"
+# 非 --jsonl 下载（--arnumber/--doi/--url）的默认输出目录
+PAPERS_DIR = WORK_DIR / "papers"
 DEFAULT_COOKIES = CONFIG_DIR / "ieee_cookies.txt"
-# ieee_search.py 产出的论文清单（每行一篇 article 元数据）
+# search.py 产出的论文清单（每行一篇 article 元数据）
 DEFAULT_INPUT_JSONL = WORK_DIR / "ieee_papers.jsonl"
-
-# --- 清单标识类型 -------------------------------------------------
-
-# 清单标识类型：
-#   "arnumber" —— 直接用 article_number 下载，PDF 以 arnumber 命名（默认）
-#   "doi"      —— 用 DOI 下载：优先使用 JSONL 元数据中的 article_number
-#                 （缺失时才经 doi.org 重定向定位，失败再回退 Crossref），
-#                 PDF 以净化后的 DOI 命名
-ID_TYPE = "arnumber"
 
 # --- 下载引擎与限速 ---------------------------------------------
 
@@ -142,13 +136,12 @@ class Status(str, Enum):
 
 @dataclass(frozen=True)
 class PaperItem:
-    """One paper from the input JSONL.
+    """One paper to download.
 
-    arnumber mode: arnumber is set, item_key equals it (PDF filename and
-    state-file key); doi is informational and kept for display.
-    doi mode: doi is set and item_key is a sanitized DOI. The arnumber from
-    the JSONL metadata is kept too; only when it is missing is the DOI
-    resolved through doi.org at download time.
+    Downloads and PDF filenames always use the arnumber (item_key == arnumber).
+    doi is kept for reference/display and is optional. A direct --doi item has
+    arnumber=None until its DOI is resolved at download time, after which the
+    PDF is named by the resolved arnumber.
     """
 
     item_key: str
@@ -166,29 +159,12 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def safe_item_key(raw: str) -> str:
-    """Turn an identifier (e.g. a DOI containing '/') into a filesystem-safe
-    filename/state key."""
-    key = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._")
-    return key or "unknown"
-
-
-def load_papers_jsonl(path: Path, id_type: str) -> list[PaperItem]:
+def load_papers_jsonl(path: Path) -> list[PaperItem]:
     """Load the paper JSONL: one article metadata object per line, as
-    produced by ieee_search.py.
-
-    id_type="arnumber" keys items by article_number; id_type="doi" keys
-    them by a sanitized DOI. Both identifiers are kept from the metadata
-    for display and use; doi mode resolves the DOI at download time only
-    for rows whose metadata has no article_number. Rows missing the
-    identifier required by the selected mode are skipped with a warning;
-    duplicate keys are skipped as well.
+    produced by search.py. Items are keyed by article_number (required;
+    the PDF filename and state key). Rows without a usable article_number are
+    skipped with a warning; duplicate article numbers are skipped as well.
     """
-    if id_type not in ("arnumber", "doi"):
-        raise ValueError(
-            f"Unknown ID_TYPE {id_type!r} (expected 'arnumber' or 'doi')"
-        )
-
     items: list[PaperItem] = []
     seen: set[str] = set()
     skipped_missing = 0
@@ -211,43 +187,25 @@ def load_papers_jsonl(path: Path, id_type: str) -> list[PaperItem]:
         doi = str(rec.get("doi") or "").strip()
         title = str(rec.get("title") or "").strip()
 
-        if id_type == "arnumber":
-            if not arnumber.isdigit():
-                skipped_missing += 1
-                print(
-                    f"warning: line {line_number} has no valid "
-                    f"article_number, skipped",
-                    file=sys.stderr,
-                )
-                continue
-            item_key, arn, doi_value = arnumber, arnumber, (doi or None)
-        else:
-            if not doi:
-                skipped_missing += 1
-                print(
-                    f"warning: line {line_number} has no DOI, skipped",
-                    file=sys.stderr,
-                )
-                continue
-            # DOI 模式同样保留元数据中的 arnumber 供下载与双标识提示；
-            # 仅当元数据缺失时才在下载阶段解析 DOI
-            metadata_arn = arnumber if arnumber.isdigit() else None
-            item_key, arn, doi_value = (
-                safe_item_key(doi),
-                metadata_arn,
-                doi,
+        if not arnumber.isdigit():
+            skipped_missing += 1
+            print(
+                f"warning: line {line_number} has no valid "
+                f"article_number, skipped",
+                file=sys.stderr,
             )
+            continue
 
-        if item_key in seen:
+        if arnumber in seen:
             skipped_duplicate += 1
             continue
-        seen.add(item_key)
-        items.append(PaperItem(item_key, title, arn, doi_value))
+        seen.add(arnumber)
+        items.append(PaperItem(arnumber, title, arnumber, (doi or None)))
 
     if skipped_missing:
         print(
             f"warning: skipped {skipped_missing} row(s) without a usable "
-            f"{id_type} identifier",
+            f"article_number",
             file=sys.stderr,
         )
     if skipped_duplicate:
@@ -255,6 +213,73 @@ def load_papers_jsonl(path: Path, id_type: str) -> list[PaperItem]:
             f"warning: skipped {skipped_duplicate} duplicate row(s)",
             file=sys.stderr,
         )
+    return items
+
+
+def resolve_out_dir(
+    out_dir: Path | None, direct: bool, jsonl_path: Path
+) -> Path:
+    """Resolve the PDF output directory.
+
+    - an explicit ``--out-dir`` always wins;
+    - direct downloads (--arnumber/--doi/--url) default to ``PAPERS_DIR``
+      (``work/papers``);
+    - ``--jsonl`` downloads default to the JSONL file's own folder.
+    """
+    if out_dir is not None:
+        return out_dir
+    return PAPERS_DIR if direct else jsonl_path.parent
+
+
+def build_direct_items(
+    arnumbers: list[str] | None,
+    dois: list[str] | None,
+    urls: list[str] | None = None,
+) -> list[PaperItem]:
+    """Build PaperItems from --arnumber / --doi / --url flags (no JSONL file).
+
+    Each flag value may be a comma-separated list (e.g. --arnumber 1,2,3);
+    repeated flags and spaces around commas are also tolerated. arnumber items
+    carry their arnumber as item_key and are keyed uniquely. --url items are
+    IEEE Xplore links; their arnumber is extracted (reusing the DOI-resolution
+    parser) and they behave exactly like an --arnumber. doi items carry
+    arnumber=None and are resolved to an arnumber at download time (the PDF is
+    then named by that arnumber). title is empty for direct items.
+    """
+    items: list[PaperItem] = []
+    seen: set[str] = set()
+
+    def _expand(values: list[str] | None):
+        for raw in values or []:
+            for part in str(raw).split(","):
+                part = part.strip()
+                if part:
+                    yield part
+
+    def _add_arnumber(arn: str) -> None:
+        if not arn.isdigit():
+            raise ValueError(f"--arnumber must be numeric, got {arn!r}")
+        if arn in seen:
+            return
+        seen.add(arn)
+        items.append(PaperItem(item_key=arn, title="", arnumber=arn, doi=None))
+
+    for arn in _expand(arnumbers):
+        _add_arnumber(arn)
+
+    for url in _expand(urls):
+        arn = extract_arnumber(url)
+        if not arn:
+            raise ValueError(f"--url has no arnumber: {url!r}")
+        _add_arnumber(arn)
+
+    for doi in _expand(dois):
+        key = f"doi:{doi.lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(PaperItem(item_key=key, title="", arnumber=None, doi=doi))
+
     return items
 
 
@@ -630,6 +655,11 @@ class BaseDownloader:
             arnumber = self.resolve_arnumber(item.doi)
             print(f"  DOI resolved -> arnumber {arnumber}")
 
+        # PDFs are always named by arnumber; a direct --doi item has no
+        # pre-assigned arnumber, so adopt the resolved one as its key/filename.
+        if item.item_key != arnumber:
+            item = replace(item, item_key=arnumber)
+
         self.open_document(arnumber)
 
         last_error: RetriableDownloadError | None = None
@@ -922,7 +952,6 @@ def run_downloads(
 
         record = {
             "item_key": item.item_key,
-            "id_type": ID_TYPE,
             "arnumber": item.arnumber,
             "doi": item.doi,
             "title": item.title,
@@ -934,6 +963,11 @@ def run_downloads(
             while True:
                 try:
                     arnumber, body = downloader.download(item)
+                    if item.item_key != arnumber:
+                        # direct --doi item resolved to its arnumber: name the
+                        # PDF and state record by the arnumber.
+                        out_path = out_dir / f"{arnumber}.pdf"
+                        record["item_key"] = arnumber
                     atomic_write_bytes(out_path, body)
                     record.update(
                         {
@@ -1053,23 +1087,50 @@ def run_downloads(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog="ieee-tools download",
         description=(
-            "Download PDFs from IEEE Xplore from a JSONL paper list "
-            "(ID_TYPE selects arnumber or doi mode)."
-        )
+            "Download PDFs from IEEE Xplore from a JSONL paper list, "
+            "or directly from --arnumber / --doi / --url "
+            "(PDFs named by arnumber)."
+        ),
     )
     parser.add_argument(
         "--jsonl",
         type=Path,
         default=DEFAULT_INPUT_JSONL,
         help="Paper JSONL, one article object per line "
-        "(default: work/ieee_papers.jsonl)",
+        "(default: work/ieee_papers.jsonl; ignored if --arnumber/--doi/--url given)",
+    )
+    parser.add_argument(
+        "--arnumber",
+        action="append",
+        default=None,
+        metavar="N[,N...]",
+        help="Download by article number directly; comma-separated for "
+        "multiple (e.g. 1,2,3); skips --jsonl",
+    )
+    parser.add_argument(
+        "--doi",
+        action="append",
+        default=None,
+        metavar="DOI[,DOI...]",
+        help="Download by DOI directly; comma-separated for multiple; "
+        "skips --jsonl",
+    )
+    parser.add_argument(
+        "--url",
+        action="append",
+        default=None,
+        metavar="URL[,URL...]",
+        help="Download by IEEE Xplore document URL (arnumber extracted); "
+        "comma-separated for multiple; skips --jsonl",
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=PAPERS_DIR,
-        help="Output directory for PDFs (default: papers/)",
+        default=None,
+        help="Output directory for PDFs. Default: the input JSONL's folder "
+        "when downloading from --jsonl; otherwise work/papers/.",
     )
     parser.add_argument(
         "--cookies", type=Path, default=DEFAULT_COOKIES,
@@ -1129,6 +1190,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # Direct-identifier mode: --arnumber / --doi / --url bypass the JSONL list.
+    direct = bool(args.arnumber or args.doi or args.url)
+
     # Validation
     if args.delay < 0:
         parser.error("--delay must be >= 0")
@@ -1138,7 +1202,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--cooldown-seconds must be >= 0")
     if args.max_rate_limits < 1:
         parser.error("--max-rate-limits must be >= 1")
-    if not args.jsonl.is_file():
+    if not direct and not args.jsonl.is_file():
         parser.error(f"JSONL file not found: {args.jsonl}")
 
     # Cookies are mandatory for both engines.
@@ -1150,13 +1214,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
 
-    items = load_papers_jsonl(args.jsonl, ID_TYPE)
+    if direct:
+        try:
+            items = build_direct_items(args.arnumber, args.doi, args.url)
+        except ValueError as exc:
+            parser.error(str(exc))
+    else:
+        items = load_papers_jsonl(args.jsonl)
     if not items:
-        print(f"No usable items found in {args.jsonl} (id_type={ID_TYPE})")
+        source = "direct --arnumber/--doi/--url" if direct else str(args.jsonl)
+        print(f"No usable items found from {source}")
         return EXIT_OK
 
     state_path = args.state or (args.jsonl.parent / "download_state.jsonl")
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = resolve_out_dir(args.out_dir, direct, args.jsonl)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     downloader_cls = (
         PlaywrightDownloader
@@ -1165,15 +1237,15 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print(
-        f"Engine: {args.engine} | id_type: {ID_TYPE} | items: {len(items)} | "
-        f"out: {args.out_dir} | state: {state_path}"
+        f"Engine: {args.engine} | items: {len(items)} | "
+        f"out: {out_dir} | state: {state_path}"
     )
 
     with downloader_cls(args.cookies) as downloader:
         return run_downloads(
             items,
             downloader,
-            out_dir=args.out_dir,
+            out_dir=out_dir,
             state_path=state_path,
             delay=args.delay,
             limit=args.limit,
@@ -1182,6 +1254,92 @@ def main(argv: list[str] | None = None) -> int:
             cooldown_seconds=args.cooldown_seconds,
             max_consecutive_rate_limits=args.max_rate_limits,
         )
+
+
+def build_status_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="ieee-tools status",
+        description="Show download progress from download_state.jsonl.",
+    )
+    ap.add_argument(
+        "--dir", default=None,
+        help="Topic directory containing download_state.jsonl",
+    )
+    ap.add_argument("--state", default=None, help="Path to download_state.jsonl")
+    ap.add_argument(
+        "--json", action="store_true", dest="as_json",
+        help="Machine-readable JSON output",
+    )
+    return ap
+
+
+def status_main(argv: list[str] | None = None) -> int:
+    """Summarize a download_state.jsonl: counts per status + failed items."""
+    a = build_status_parser().parse_args(argv)
+
+    if a.state:
+        path = Path(a.state)
+    elif a.dir:
+        path = Path(a.dir) / "download_state.jsonl"
+    else:
+        path = WORK_DIR / "download_state.jsonl"
+
+    if not path.is_file():
+        print(f"error: state file not found: {path}", file=sys.stderr)
+        return 3
+
+    latest: dict[str, dict] = {}
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        key = rec.get("item_key")
+        if key:
+            latest[key] = rec
+
+    counts: dict[str, int] = {}
+    failed: list[dict] = []
+    for rec in latest.values():
+        status = rec.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+        if status != "success":
+            failed.append(
+                {
+                    "item_key": rec.get("item_key"),
+                    "status": status,
+                    "error": rec.get("error", ""),
+                    "title": rec.get("title", ""),
+                }
+            )
+
+    total = len(latest)
+    if a.as_json:
+        print(
+            json.dumps(
+                {
+                    "path": str(path),
+                    "total": total,
+                    "counts": counts,
+                    "failed": failed,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    print(f"state: {path}")
+    summary = "  ".join(f"{k}: {v}" for k, v in sorted(counts.items()))
+    print(f"total: {total}  {summary}".rstrip())
+    if failed:
+        print("failed:")
+        for f in failed:
+            print(f"  {f['item_key']}  {f['status']}  {f['error']}".rstrip())
+    return 0
 
 
 if __name__ == "__main__":

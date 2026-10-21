@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import re
+import sys
 import time
 from pathlib import Path
 from urllib.parse import urlencode
@@ -12,7 +15,9 @@ from urllib.error import HTTPError, URLError
 # IEEE Xplore Metadata API configuration
 # ============================================================
 
-ENV_FILE = Path(__file__).resolve().parent / ".env"
+# search.py lives at <repo>/src/ieee_tools/search.py -> parents[2] is repo root.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE = PROJECT_ROOT / ".env"
 
 
 def load_env_key(env_path: Path, key_name: str) -> str:
@@ -40,8 +45,9 @@ def load_env_key(env_path: Path, key_name: str) -> str:
 # Read the key from .env (an already-set environment variable wins, if present).
 IEEE_API_KEY = os.environ.get("IEEE_API_KEY") or load_env_key(ENV_FILE, "IEEE_API_KEY")
 
-# Search parameters
-querytext = "ADC"
+# Search parameters. All default to empty/None: nothing is searched unless
+# the caller supplies at least one parameter via CLI flags.
+querytext = ""
 
 abstract = None
 affiliation = None
@@ -74,7 +80,7 @@ sort_order = None
 
 # Delay in seconds between page requests, to avoid IEEE API rate
 # limiting (HTTP 403 "Service Over Qps"). Set to 0 to disable.
-request_interval_seconds = 10
+request_interval_seconds = 30
 
 # Automatic retry when the IEEE API responds HTTP 403 ("Service Over
 # Qps" rate limiting): wait http_403_retry_wait_seconds and retry up to
@@ -98,9 +104,33 @@ save_count = 0
 API_URL = "https://ieeexploreapi.ieee.org/api/v1/search/articles"
 
 # JSONL: one article metadata object per line; the merged raw response is
-# saved separately as RAW_JSON_FILE.
-PAPERS_JSONL_FILE = Path("work/ieee_papers.jsonl")
-RAW_JSON_FILE = Path("work/ieee_raw.json")
+# saved separately as RAW_JSON_FILE. Anchored to the repo root so behaviour
+# does not depend on the current working directory.
+WORK_DIR = PROJECT_ROOT / "work"
+SEARCH_RESULTS_DIR = WORK_DIR / "search_results"
+PAPERS_JSONL_FILE = WORK_DIR / "ieee_papers.jsonl"
+RAW_JSON_FILE = WORK_DIR / "ieee_raw.json"
+
+
+def slugify_query(text: str) -> str:
+    """Turn a search query into a directory name.
+
+    Whitespace -> ``_``; hyphens ``-`` are kept; other characters that are
+    unsafe in a path (``/ \\ : * ? " < > |`` etc.) become ``_``; repeated
+    ``_`` collapse; leading/trailing ``_`` and ``.`` are trimmed. Returns ""
+    when nothing usable remains.
+
+    Example: ``"Time-Domain ADC"`` -> ``"Time-Domain_ADC"``.
+    """
+    s = re.sub(r"\s+", "_", text.strip())
+    s = re.sub(r"[^\w.-]+", "_", s)  # keep word chars (incl. CJK), dot, hyphen
+    s = re.sub(r"_+", "_", s).strip("_.")
+    return s
+
+# Exit codes (aligned with download.py)
+EXIT_OK = 0
+EXIT_FAILED = 2
+EXIT_USAGE = 3
 
 
 def build_search_params(start: int) -> dict[str, str]:
@@ -251,57 +281,11 @@ def article_identity(article: dict) -> str:
     return ""
 
 
-def main() -> None:
-    if not IEEE_API_KEY:
-        raise RuntimeError("Please set IEEE_API_KEY in .env first.")
+def _run_search() -> tuple[int, int, int, int]:
+    """Run the paged search and write the JSONL / raw JSON outputs.
 
-    if not querytext and not any(
-        value not in (None, "")
-        for value in (
-            abstract,
-            affiliation,
-            article_number,
-            article_title,
-            author,
-            d_au,
-            doi,
-            d_publisher,
-            d_pubtype,
-            d_year,
-            end_date,
-            facet,
-            index_terms,
-            isbn,
-            issn,
-            is_number,
-            meta_data,
-            publication_id,
-            publication_title,
-            publication_year,
-            start_date,
-            thesaurus_terms,
-        )
-    ):
-        raise RuntimeError("At least one IEEE search parameter must be configured.")
-
-    if not 1 <= max_records <= 200:
-        raise RuntimeError("max_records must be between 1 and 200.")
-
-    if start_record < 1:
-        raise RuntimeError("start_record must be >= 1.")
-
-    if save_count < 0:
-        raise RuntimeError("save_count must be >= 0.")
-
-    if request_interval_seconds < 0:
-        raise RuntimeError("request_interval_seconds must be >= 0.")
-
-    if not isinstance(http_403_retry_count, int) or http_403_retry_count < 0:
-        raise RuntimeError("http_403_retry_count must be an integer >= 0.")
-
-    if http_403_retry_wait_seconds < 0:
-        raise RuntimeError("http_403_retry_wait_seconds must be >= 0.")
-
+    Returns (pages_requested, saved, with_doi, without_doi).
+    """
     PAPERS_JSONL_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     saved = 0
@@ -392,14 +376,190 @@ def main() -> None:
             encoding="utf-8",
         )
 
+    return pages_requested, saved, with_doi, without_doi
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ieee-tools search",
+        description=(
+            "Search IEEE Xplore via the Metadata API and save results to a "
+            "JSONL paper list. At least one search parameter is required."
+        ),
+    )
+    parser.add_argument(
+        "-q", "--query", default=None,
+        help="Full-text query keywords (querytext)",
+    )
+    parser.add_argument("--author", default=None, help="Author filter")
+    parser.add_argument(
+        "--title", default=None, help="Article title filter (article_title)"
+    )
+    parser.add_argument("--doi", default=None, help="DOI filter")
+    parser.add_argument("--year", default=None, help="Publication year (d_year)")
+    parser.add_argument(
+        "--publication", default=None, help="Publication title filter"
+    )
+    parser.add_argument("--start-date", default=None, help="Start date (YYYYMMDD)")
+    parser.add_argument("--end-date", default=None, help="End date (YYYYMMDD)")
+    parser.add_argument(
+        "--max-records", type=int, default=None,
+        help="Records per page, 1-200 (default 200)",
+    )
+    parser.add_argument(
+        "--save-count", type=int, default=None,
+        help="Max papers to save, 0 = all (default 0)",
+    )
+    parser.add_argument(
+        "--interval", type=float, default=None,
+        help="Seconds between page requests (default 30)",
+    )
+    parser.add_argument(
+        "--retry-403-count", type=int, default=None,
+        help="Retries on HTTP 403 rate limiting (default 3)",
+    )
+    parser.add_argument(
+        "--retry-403-wait", type=float, default=None,
+        help="Seconds to wait between 403 retries (default 60)",
+    )
+    parser.add_argument(
+        "--dir", dest="out_dir", default=None,
+        help="Output directory for ieee_papers.jsonl / ieee_raw.json "
+        "(default: work/search_results/<query>, where the query has spaces "
+        "turned into underscores)",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    global querytext, author, article_title, doi, d_year, publication_title
+    global start_date, end_date
+    global max_records, save_count, request_interval_seconds
+    global http_403_retry_count, http_403_retry_wait_seconds
+    global PAPERS_JSONL_FILE, RAW_JSON_FILE
+
+    if args.query is not None:
+        querytext = args.query
+    if args.author is not None:
+        author = args.author
+    if args.title is not None:
+        article_title = args.title
+    if args.doi is not None:
+        doi = args.doi
+    if args.year is not None:
+        d_year = args.year
+    if args.publication is not None:
+        publication_title = args.publication
+    if args.start_date is not None:
+        start_date = args.start_date
+    if args.end_date is not None:
+        end_date = args.end_date
+    if args.max_records is not None:
+        max_records = args.max_records
+    if args.save_count is not None:
+        save_count = args.save_count
+    if args.interval is not None:
+        request_interval_seconds = args.interval
+    if args.retry_403_count is not None:
+        http_403_retry_count = args.retry_403_count
+    if args.retry_403_wait is not None:
+        http_403_retry_wait_seconds = args.retry_403_wait
+    if args.out_dir is not None:
+        out_dir = Path(args.out_dir)
+        PAPERS_JSONL_FILE = out_dir / "ieee_papers.jsonl"
+        RAW_JSON_FILE = out_dir / "ieee_raw.json"
+    else:
+        # Default: work/search_results/<query slug>/ (query spaces -> _).
+        slug = slugify_query(querytext) or "search"
+        out_dir = SEARCH_RESULTS_DIR / slug
+        PAPERS_JSONL_FILE = out_dir / "ieee_papers.jsonl"
+        RAW_JSON_FILE = out_dir / "ieee_raw.json"
+
+    # --- Validation: fail loudly (nonzero exit) instead of searching blindly ---
+
+    if not IEEE_API_KEY:
+        print(
+            "error: IEEE API key not found. Set IEEE_API_KEY in .env "
+            "(or the environment) first.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    if not querytext and not any(
+        value not in (None, "")
+        for value in (
+            abstract,
+            affiliation,
+            article_number,
+            article_title,
+            author,
+            d_au,
+            doi,
+            d_publisher,
+            d_pubtype,
+            d_year,
+            end_date,
+            facet,
+            index_terms,
+            isbn,
+            issn,
+            is_number,
+            meta_data,
+            publication_id,
+            publication_title,
+            publication_year,
+            start_date,
+            thesaurus_terms,
+        )
+    ):
+        print(
+            "error: no search parameter given. Provide at least one of "
+            "-q/--query, --author, --title, --doi, --year, --publication, "
+            "--start-date, --end-date, ...",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    if not 1 <= max_records <= 200:
+        print("error: --max-records must be between 1 and 200.", file=sys.stderr)
+        return EXIT_USAGE
+    if start_record < 1:
+        print("error: start_record must be >= 1.", file=sys.stderr)
+        return EXIT_USAGE
+    if save_count < 0:
+        print("error: --save-count must be >= 0.", file=sys.stderr)
+        return EXIT_USAGE
+    if request_interval_seconds < 0:
+        print("error: --interval must be >= 0.", file=sys.stderr)
+        return EXIT_USAGE
+    if not isinstance(http_403_retry_count, int) or http_403_retry_count < 0:
+        print(
+            "error: --retry-403-count must be an integer >= 0.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    if http_403_retry_wait_seconds < 0:
+        print("error: --retry-403-wait must be >= 0.", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        pages_requested, saved, with_doi, without_doi = _run_search()
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+
     print()
-    print(f"Finished.")
+    print("Finished.")
     print(f"Pages requested: {pages_requested}")
     print(f"Papers saved to JSONL: {saved}")
     print(f"  with DOI: {with_doi}, without DOI: {without_doi}")
     print(f"JSONL: {PAPERS_JSONL_FILE}")
     print(f"Raw JSON: {RAW_JSON_FILE}")
+    return EXIT_OK
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

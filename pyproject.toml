@@ -1,7 +1,7 @@
 [project]
 name = "ieee-tools"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "IEEE Xplore 论文检索、Cookie 导出与批量下载 CLI"
 readme = "README.md"
 authors = [
     { name = "Fishskys", email = "1721619420@qq.com" }
@@ -13,7 +13,16 @@ dependencies = [
 ]
 
 [project.scripts]
-ieee-tools = "ieee_tools:main"
+ieee-tools = "ieee_tools.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [build-system]
 requires = ["uv_build>=0.12.15,<0.13.0"]
