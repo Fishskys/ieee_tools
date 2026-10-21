@@ -1,0 +1,7 @@
+# pre-commit 配置：提交前用 init_your_proj 做敏感信息检查
+# hook 定义见 init_your_proj 的 .pre-commit-hooks.yaml（entry: iyp check --stage --strict）
+repos:
+  - repo: https://github.com/Fishskys/init_your_proj
+    rev: v0.1.1
+    hooks:
+      - id: iyp-check

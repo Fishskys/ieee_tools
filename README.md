@@ -338,3 +338,13 @@ uv run pytest -q tests/test_download.py   # 只跑某一文件
 覆盖点：`search` 的查询→目录名与参数校验、`download` 的清单加载/直连解析/输出目录解析/`status` 统计、
 `cookies` 的 Netscape 写出与惰性导入、`cli` 的顶层三态与命令分发。
 
+### 7.1 提交前敏感信息检查（pre-commit）
+
+本项目通过 [pre-commit](https://pre-commit.com) 集成 [init_your_proj](https://github.com/Fishskys/init_your_proj) 的 `iyp-check`：**每次 `git commit` 前只扫描暂存文件**，命中密钥/Cookie/IP/本机用户名等敏感内容即阻断提交。
+
+- 配置：[`.pre-commit-config.yaml`](.pre-commit-config.yaml)（`rev: v0.1.1`，`id: iyp-check`）
+- 前置：`iyp` 需在 PATH（`pre-commit` 以 `language: system` 直接调用）
+- 安装：`pre-commit install`（写入 `.git/hooks/pre-commit`）；手动全量：`pre-commit run --all-files`
+
+**误报白名单**放在项目根的 `init_your_proj.toml` 的 `[check].whitelist_strings`（子串匹配，命中行含该串即不报）。该文件按惯例**本地维护、不入库**（已在 `.gitignore` 中忽略，与 paperbox 等仓库一致）；当前登记的非敏感字面量：日志文案 `读取 Cookie:` / `IEEE Cookie:`（被 `cookie_header` 误判）、UA 串 `Chrome/120.0.0.0`（被 `ipv4` 误判）。新环境需自行按同样内容创建。
+

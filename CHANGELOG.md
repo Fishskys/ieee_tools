@@ -7,6 +7,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- 集成 pre-commit：[`.pre-commit-config.yaml`](.pre-commit-config.yaml) 以 `rev: v0.1.1` 引用
+  [init_your_proj](https://github.com/Fishskys/init_your_proj) 的 `iyp-check`（`iyp check --stage --strict`），
+  提交前扫描暂存文件拦截敏感信息；误报白名单在项目根 `init_your_proj.toml` 的
+  `[check].whitelist_strings`（该文件本地维护、不入库）。
+
 ## [0.2.0] - 2026-10-21
 
 统一 `ieee-tools` 命令行入口，并将代码按命令拆分进 `src/ieee_tools/` 包。

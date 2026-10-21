@@ -55,6 +55,10 @@ lastmod: 2026-10-21T16:00:00+08:00
 - 命令模块命名与服务一致、去掉 `ieee` 前缀（`search` / `cookies` / `download`），`status` 作为只读统计实现在 `download.py`。
 - 产物锚定仓库根（`Path(__file__).resolve().parents[2]`），**不得依赖当前工作目录**。
 - `config/` 与 `work/` 下含登录态与数据的文件均属敏感/运行产物，禁止提交。
+- **提交前检查**：仓库根 `.pre-commit-config.yaml` 以 `rev` 固定引用 `Fishskys/init_your_proj` 的 `iyp-check`
+  hook（`entry: iyp check --stage --strict`），提交前扫描暂存文件拦截敏感信息；误报白名单在项目根
+  `init_your_proj.toml` 的 `[check].whitelist_strings`（该文件本地维护、不入库，见 `.gitignore`）。
+  `git commit` 前须保证该 hook 通过。
 
 ### 1.3 版本号分布
 

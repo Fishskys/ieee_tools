@@ -63,13 +63,12 @@ npm-debug.log*
 yarn-error.log*
 yarn-debug.log*
 
-# --- init_your_proj 工具自身 ---
-init_your_proj/
-init_your_proj/log/
-
 # --- AI agent 工具目录（.hermes/.claude/.cursor 等） ---
 .hermes/
 .claude/
 .cursor/
 .aider*
 .codex/
+
+# init_your_proj 增量配置
+init_your_proj.toml
