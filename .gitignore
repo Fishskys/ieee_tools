@@ -11,7 +11,7 @@ wheels/
 # playwright cache
 .cache
 # work/ holds search results, downloaded papers and download state (keep examples)
-work/*
+work/
 !work/ieee_raw_example.json
 !work/ieee_papers_example.jsonl
 ieee_cookies.txt
