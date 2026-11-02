@@ -222,3 +222,72 @@ def test_run_downloads_survives_unexpected_exception(tmp_path):
     assert status_by_key["222"] == "success"
     assert rc == download.EXIT_FAILED
 
+
+# --------------------------------------------------------------------------
+# resolve_arnumber — Crossref first + retry on transient errors
+# --------------------------------------------------------------------------
+
+_CROSSREF_WITH_ARN = json.dumps(
+    {"message": {"resource": {"primary": {
+        "URL": "https://ieeexplore.ieee.org/document/8888888"}}}}
+).encode()
+
+
+class _ResolveProbe(download.BaseDownloader):
+    """Fake downloader whose http_resolve is scripted per channel."""
+
+    def __init__(self, crossref_results, doi_results):
+        self.crossref_results = list(crossref_results)
+        self.doi_results = list(doi_results)
+        self.calls = []
+
+    def http_resolve(self, url):
+        self.calls.append(url)
+        bucket = self.crossref_results if "crossref" in url else self.doi_results
+        r = bucket.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+def test_resolve_prefers_crossref_and_retries(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *_: None)
+    probe = _ResolveProbe(
+        crossref_results=[
+            download.RetriableDownloadError("tls boom"),
+            (200, "", _CROSSREF_WITH_ARN),
+        ],
+        doi_results=[],
+    )
+    arn = probe.resolve_arnumber("10.1109/TCSI.2020.1234567")
+    assert arn == "8888888"
+    # doi.org was never needed because Crossref (after a retry) succeeded.
+    assert all("doi.org" not in u for u in probe.calls)
+
+
+def test_resolve_falls_back_to_doi_org(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *_: None)
+    probe = _ResolveProbe(
+        crossref_results=[(200, "", b'{"message": {}}')],  # no arnumber
+        doi_results=[
+            (302, "https://ieeexplore.ieee.org/document/7654321", b""),
+        ],
+    )
+    arn = probe.resolve_arnumber("10.1109/X.Y")
+    assert arn == "7654321"
+
+
+def test_resolve_transient_exhausted_raises_downloaderror(monkeypatch):
+    monkeypatch.setattr(download.time, "sleep", lambda *_: None)
+    probe = _ResolveProbe(
+        crossref_results=[download.RetriableDownloadError("down")] * (
+            download.HTTP_RETRY_COUNT + 1
+        ),
+        doi_results=[download.RetriableDownloadError("down")] * (
+            download.HTTP_RETRY_COUNT + 1
+        ),
+    )
+    with pytest.raises(download.DownloadError):
+        probe.resolve_arnumber("10.1109/X.Y")
+
+

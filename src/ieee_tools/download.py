@@ -593,33 +593,80 @@ class BaseDownloader:
 
     # -- shared template method -----------------------------------------
 
+    @staticmethod
+    def _resolve_backoff(attempt: int) -> None:
+        backoff = min(float(2 ** (attempt - 1)), HTTP_RETRY_BACKOFF_MAX)
+        print(
+            f"  resolve retry {attempt}/{HTTP_RETRY_COUNT} in {backoff:g}s",
+            file=sys.stderr,
+        )
+        time.sleep(backoff)
+
     def resolve_arnumber(self, doi: str) -> str:
         """Resolve a DOI to an IEEE arnumber.
 
-        Channel 1 follows doi.org redirects: the final URL is the IEEE
-        document page even when IEEE answers with an AWS WAF challenge
-        (HTTP 202). Channel 2 queries the Crossref metadata API.
+        Channel 1 queries the Crossref metadata API (no redirect chain, more
+        stable than doi.org). Channel 2 follows doi.org redirects, whose final
+        URL is the IEEE document page even when IEEE answers with an AWS WAF
+        challenge (HTTP 202). Both channels are retried with exponential
+        backoff, so a single transient TLS/connection error no longer aborts
+        the item.
         """
         encoded = quote(doi, safe="/")
-        status, final_url, body = self.http_resolve(
-            DOI_RESOLVE_URL.format(doi=encoded)
-        )
+        crossref_404 = False
+
+        # -- Channel 1: Crossref (preferred) --------------------------------
+        for attempt in range(HTTP_RETRY_COUNT + 1):
+            if attempt > 0:
+                self._resolve_backoff(attempt)
+            try:
+                c_status, _, c_body = self.http_resolve(
+                    CROSSREF_API_URL.format(doi=encoded)
+                )
+            except RetriableDownloadError as exc:
+                if attempt < HTTP_RETRY_COUNT:
+                    print(
+                        f"  crossref transient ({exc}); retrying",
+                        file=sys.stderr,
+                    )
+                    continue
+                print(
+                    f"  crossref unavailable ({exc}); trying doi.org",
+                    file=sys.stderr,
+                )
+                break
+            if c_status == 200:
+                arnumber = arnumber_from_crossref(c_body)
+                if arnumber:
+                    return arnumber
+            elif c_status == 404:
+                crossref_404 = True
+            break
+
+        # -- Channel 2: follow doi.org redirects (retried) ------------------
+        status, final_url, body = 0, "", b""
+        last_exc: RetriableDownloadError | None = None
+        for attempt in range(HTTP_RETRY_COUNT + 1):
+            if attempt > 0:
+                self._resolve_backoff(attempt)
+            try:
+                status, final_url, body = self.http_resolve(
+                    DOI_RESOLVE_URL.format(doi=encoded)
+                )
+                last_exc = None
+                break
+            except RetriableDownloadError as exc:
+                last_exc = exc
+        if last_exc is not None:
+            raise DownloadError(
+                f"could not resolve arnumber for doi:{doi} ({last_exc})"
+            ) from last_exc
+
         arnumber = extract_arnumber(final_url)
         if arnumber:
             return arnumber
-
-        crossref_status, crossref_body = 0, b""
-        with suppress(DownloadError):
-            crossref_status, _, crossref_body = self.http_resolve(
-                CROSSREF_API_URL.format(doi=encoded)
-            )
-        if crossref_status == 200:
-            arnumber = arnumber_from_crossref(crossref_body)
-            if arnumber:
-                return arnumber
-        if crossref_status == 404:
+        if crossref_404:
             raise NotFoundError(f"DOI not found: {doi} (Crossref 404)")
-
         if status not in (200, 202):
             raise classify_http_error(
                 status, body, f"doi:{doi}", "doi-resolve"
