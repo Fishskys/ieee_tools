@@ -37,6 +37,7 @@ import random
 import re
 import sys
 import time
+import traceback
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -127,6 +128,7 @@ class Status(str, Enum):
 
     SUCCESS = "success"
     FAILED = "failed"
+    ERROR = "error"
     NOT_PDF = "not_pdf"
     NOT_FOUND = "not_found"
     AUTH_FAILED = "auth_failed"
@@ -766,9 +768,11 @@ class PlaywrightDownloader(BaseDownloader):
         self._context = None
         self._page = None
         self._timeout_error = TimeoutError
+        self._pw_error = Exception
 
     def __enter__(self) -> "PlaywrightDownloader":
         try:
+            from playwright.sync_api import Error as PWError
             from playwright.sync_api import TimeoutError as PWTimeout
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -778,6 +782,7 @@ class PlaywrightDownloader(BaseDownloader):
                 "  playwright install chromium"
             )
         self._timeout_error = PWTimeout
+        self._pw_error = PWError
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(headless=True)
         self._context = self._browser.new_context(user_agent=USER_AGENT)
@@ -805,6 +810,8 @@ class PlaywrightDownloader(BaseDownloader):
             )
         except self._timeout_error as exc:
             raise RetriableDownloadError(f"resolve request timeout: {exc}") from exc
+        except self._pw_error as exc:
+            raise RetriableDownloadError(f"resolve request failed: {exc}") from exc
         with suppress(Exception):
             return response.status, response.url, response.body()
         return response.status, response.url, b""
@@ -825,6 +832,8 @@ class PlaywrightDownloader(BaseDownloader):
             )
         except self._timeout_error as exc:
             raise RetriableDownloadError(f"document page timeout: {exc}") from exc
+        except self._pw_error as exc:
+            raise RetriableDownloadError(f"document page failed: {exc}") from exc
 
         if response.status != 200:
             body = b""
@@ -845,6 +854,8 @@ class PlaywrightDownloader(BaseDownloader):
             )
         except self._timeout_error as exc:
             raise RetriableDownloadError(f"pdf request timeout: {exc}") from exc
+        except self._pw_error as exc:
+            raise RetriableDownloadError(f"pdf request failed: {exc}") from exc
 
         if response.status != 200:
             try:
@@ -1044,6 +1055,26 @@ def run_downloads(
                     failed += 1
                     consecutive_rate_limits = 0
                     print(f"  FAIL ({status.value}): {exc}", file=sys.stderr)
+                    break
+
+                except Exception as exc:  # noqa: BLE001
+                    # Catch-all: an unexpected error in ONE item (e.g. a
+                    # transient TLS/connection error during DOI resolution that
+                    # is not wrapped as DownloadError) must never kill the whole
+                    # batch. Record it as `error` and move on to the next item.
+                    traceback.print_exc(file=sys.stderr)
+                    record.update(
+                        {
+                            "status": Status.ERROR.value,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+                    failed += 1
+                    consecutive_rate_limits = 0
+                    print(
+                        f"  ERROR (unexpected): {type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
                     break
 
             # Record is finalized (success or deterministic failure).

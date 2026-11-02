@@ -171,3 +171,54 @@ def test_status_main_missing_file(tmp_path, capsys):
     rc = download.status_main(["--state", str(tmp_path / "nope.jsonl")])
     assert rc == 3
     assert "state file not found" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# run_downloads — a single item's unexpected error must NOT abort the batch
+# --------------------------------------------------------------------------
+
+class _FakeDownloader:
+    """Minimal downloader stand-in: returns bytes per item_key or raises."""
+
+    engine_name = "fake"
+
+    def __init__(self, behavior):
+        self.behavior = behavior
+
+    def download(self, item):
+        value = self.behavior[item.item_key]
+        if isinstance(value, Exception):
+            raise value
+        return item.item_key, value
+
+
+def test_run_downloads_survives_unexpected_exception(tmp_path):
+    items = [
+        download.PaperItem("111", "t1", "111", None),
+        download.PaperItem("222", "t2", "222", None),
+    ]
+    pdf = b"%PDF-1.4\n" + b"x" * 20000 + b"\n%%EOF\n"
+    fake = _FakeDownloader({"111": ConnectionResetError("tls boom"), "222": pdf})
+    state = tmp_path / "state.jsonl"
+
+    rc = download.run_downloads(
+        items,
+        fake,
+        out_dir=tmp_path,
+        state_path=state,
+        delay=0,
+        limit=0,
+        retry_failed=False,
+        force=False,
+        cooldown_seconds=0,
+        max_consecutive_rate_limits=3,
+    )
+
+    # The second item is still downloaded despite the first one blowing up.
+    assert (tmp_path / "222.pdf").is_file()
+    recs = [json.loads(l) for l in state.read_text().splitlines() if l.strip()]
+    status_by_key = {r["item_key"]: r["status"] for r in recs}
+    assert status_by_key["111"] == "error"
+    assert status_by_key["222"] == "success"
+    assert rc == download.EXIT_FAILED
+
