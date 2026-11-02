@@ -74,6 +74,9 @@ DELAY_JITTER_SECONDS = 3.0
 # 限流熔断：同一篇遇限流后的冷却时间，以及连续多少次限流响应后终止整个运行
 RATE_LIMIT_COOLDOWN_SECONDS = 20 * 60
 MAX_CONSECUTIVE_RATE_LIMITS = 3
+# Cap / jitter for the escalating rate-limit backoff (see rate_limit_backoff).
+RATE_LIMIT_BACKOFF_CAP_SECONDS = 90 * 60
+RATE_LIMIT_BACKOFF_JITTER_SECONDS = 60.0
 
 # 单篇内瞬时错误（HTTP 5xx / 超时 / 网络错误）的重试次数与最大退避秒数；
 # 确定性错误（401/403/404/非 PDF）永不重试
@@ -403,6 +406,21 @@ def sleep_with_countdown(seconds: float, tick_seconds: float = 60.0) -> None:
         chunk = min(tick_seconds, remaining)
         time.sleep(chunk)
         remaining -= chunk
+
+
+def rate_limit_backoff(consecutive: int, base: float) -> float:
+    """Cooldown before retrying after a rate-limit response.
+
+    Escalates with the number of *consecutive* rate limits (2x per hit) up to a
+    cap, plus a little jitter, so repeated hits back off progressively and are
+    spread out rather than retried in lock-step. ``base <= 0`` disables waiting.
+    """
+    if base <= 0:
+        return 0.0
+    factor = 2 ** max(0, consecutive - 1)
+    return min(base * factor, RATE_LIMIT_BACKOFF_CAP_SECONDS) + random.uniform(
+        0, RATE_LIMIT_BACKOFF_JITTER_SECONDS
+    )
 
 
 # ============================================================
@@ -1156,8 +1174,12 @@ def run_downloads(
                         print(f"\n{summary_line()}")
                         return EXIT_FAILED
 
-                    sleep_with_countdown(cooldown_seconds)
-                    # Retry the same item after cooling down.
+                    sleep_with_countdown(
+                        rate_limit_backoff(consecutive_rate_limits, cooldown_seconds)
+                    )
+                    # Retry the same item after cooling down. Consecutive rate
+                    # limits escalate the wait so we don't slam the endpoint 3x
+                    # in a row and trip the circuit breaker unnecessarily.
 
                 except AuthError as exc:
                     record.update(
@@ -1358,7 +1380,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--cooldown-seconds",
         type=float,
         default=RATE_LIMIT_COOLDOWN_SECONDS,
-        help="Wait after a rate-limit response before retrying",
+        help="Base wait after a rate-limit response before retrying (doubles "
+        "per consecutive hit, capped; 0=off)",
     )
     parser.add_argument(
         "--max-rate-limits",

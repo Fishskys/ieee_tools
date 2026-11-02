@@ -433,3 +433,19 @@ def test_run_downloads_name_by_title(tmp_path):
     assert (tmp_path / "777_My Paper Title.pdf").is_file()
 
 
+# --------------------------------------------------------------------------
+# rate_limit_backoff — escalating cooldown
+# --------------------------------------------------------------------------
+
+def test_rate_limit_backoff_escalates_and_caps(monkeypatch):
+    monkeypatch.setattr(download.random, "uniform", lambda a, b: 0.0)
+    base = 600.0
+    assert download.rate_limit_backoff(1, base) == 600.0
+    assert download.rate_limit_backoff(2, base) == 1200.0
+    assert download.rate_limit_backoff(3, base) == 2400.0
+    # capped at RATE_LIMIT_BACKOFF_CAP_SECONDS however many consecutive hits
+    assert download.rate_limit_backoff(99, base) == download.RATE_LIMIT_BACKOFF_CAP_SECONDS
+    # base=0 disables waiting entirely
+    assert download.rate_limit_backoff(1, 0) == 0.0
+
+
