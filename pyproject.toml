@@ -1,6 +1,6 @@
 [project]
 name = "ieee-tools"
-version = "0.2.0"
+version = "0.3.0"
 description = "IEEE Xplore 论文检索、Cookie 导出与批量下载 CLI"
 readme = "README.md"
 authors = [

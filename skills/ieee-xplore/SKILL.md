@@ -1,7 +1,7 @@
 ---
 name: ieee-xplore
 description: "检索、导出登录态并批量下载 IEEE Xplore 论文时用。基于 ieee-tools CLI。"
-version: 0.2.0
+version: 0.3.0
 metadata:
   hermes:
     tags: [Research, IEEE, Papers, Download]

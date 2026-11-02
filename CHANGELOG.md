@@ -7,8 +7,31 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-30
+
+健壮性与批量可用性改进（批量下载场景实测暴露的问题）。
+
+### Fixed
+
+- **单篇异常不再中断整批**：`run_downloads` 对每篇兜底 `except Exception`，记录 `status=error` 后继续下一篇；
+  `PlaywrightDownloader` 将通用 `playwright.Error`（连接重置等）归为可重试错误。此前 DOI 解析阶段的瞬时
+  TLS 断连会带 traceback 终止整个批次。
+- **DOI 解析加重试 + Crossref 优先**：`resolve_arnumber` 先查 Crossref（无重定向、更稳），失败回落 doi.org；
+  两条通道均带指数退避重试，单次瞬时错误不再废掉整篇。
+- **`--doi` 续传按 arnumber 判重**：以前 doi 模式按 `doi:<id>.pdf`（该文件从不落盘）判重，导致每次重跑都重下；
+  现按历史已解析的 arnumber 判断，并复用其 arnumber 省掉重复解析。
+
 ### Added
 
+- `--doi-as-arnumber`：把 DOI 末段数字当 arnumber 跳过解析（doi.org 抖动时的快速通道），猜测 404 时自动回落真实解析。
+- `--doi-file PATH`：从文件读取 DOI 列表（一行一个，忽略空行与 `#` 注释），避免大批量靠 shell 展开。
+- `--name-by-title`：PDF 命名为 `<arnumber>_<标题>.pdf`（清洗跨平台非法字符、去尾点、限长）。
+- 新增单测覆盖以上全部行为（+14 个用例）。
+
+### Changed
+
+- 限流冷却改为按连续限流次数指数退避（每次翻倍，上限 90 分钟，带 0–60s 抖动），避免连撞三次白白触发熔断。
+- `Status` 新增 `error` 标签（未预期的单篇异常）。
 - 集成 pre-commit：[`.pre-commit-config.yaml`](.pre-commit-config.yaml) 以 `rev: v0.1.1` 引用
   [init_your_proj](https://github.com/Fishskys/init_your_proj) 的 `iyp-check`（`iyp check --stage --strict`），
   提交前扫描暂存文件拦截敏感信息；误报白名单在项目根 `init_your_proj.toml` 的

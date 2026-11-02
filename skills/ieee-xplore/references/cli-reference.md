@@ -53,9 +53,12 @@
 |---|---|---|
 | `--jsonl` | work/ieee_papers.jsonl | 论文清单（给出 `--arnumber`/`--doi`/`--url` 时忽略）；PDF 默认落到该清单所在目录 |
 | `--arnumber N[,N...]` | — | 直接按 arnumber 下载，逗号分隔多个 |
-| `--doi DOI[,DOI...]` | — | 直接按 DOI 下载，逗号分隔多个 |
+| `--doi DOI[,DOI...]` | — | 直接按 DOI 下载，逗号分隔多个（Crossref 优先解析，失败回落 doi.org，带重试） |
+| `--doi-file PATH` | — | 从文本文件读取 DOI（一行一个，忽略空行与 `#` 注释），折入 `--doi` |
+| `--doi-as-arnumber` | — | 快速通道：把 DOI 末段数字当 arnumber 跳过解析；猜测 404 时回落真实解析 |
 | `--url URL[,URL...]` | — | 直接按 IEEE 链接下载，逗号分隔多个（自动提取 arnumber） |
 | `--out-dir` | 清单同目录 / `work/papers/` | PDF 输出目录：`--jsonl` 下载默认落到该 JSONL 所在目录，直连下载默认 `work/papers/` |
+| `--name-by-title` | 关 | PDF 命名为 `<arnumber>_<标题>.pdf` |
 | `--cookies` | config/ieee_cookies.txt | Netscape Cookie 文件 |
 | `--state` | 输入 JSONL 同目录 `download_state.jsonl` | 下载状态文件 |
 | `--engine {playwright,httpx}` | playwright | 下载引擎（playwright 过风控） |

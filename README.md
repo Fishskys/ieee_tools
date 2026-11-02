@@ -185,6 +185,8 @@ uv run ieee-tools download --jsonl work/search_results/ADC/ieee_papers.jsonl --l
 # 直连下载：PDF 默认落到 work/papers/
 uv run ieee-tools download --arnumber 11617481,11526779           # 逗号分隔多个
 uv run ieee-tools download --doi 10.1109/JSSC.2026.3693653,10.1109/ISCA66397.2026.00175
+uv run ieee-tools download --doi-file dois.txt --doi-as-arnumber   # 大批量 + 免解析快速通道
+uv run ieee-tools download --arnumber 11617481 --name-by-title     # PDF 命名为 arnumber_标题.pdf
 uv run ieee-tools download --url https://ieeexplore.ieee.org/document/11617481
 # 任意方式都可用 --out-dir 覆盖 PDF 目录
 uv run ieee-tools download --arnumber 11617481 --out-dir work/somewhere
@@ -254,9 +256,12 @@ Chromium 持久化用户目录由 `src/ieee_tools/cookies.py` 的常量 `USER_DA
 |---|---|
 | `--jsonl PATH` | 论文清单，默认 `work/ieee_papers.jsonl`；给出 `--arnumber`/`--doi`/`--url` 时忽略 |
 | `--arnumber N[,N...]` | 直接按 arnumber 下载，逗号分隔多个；与 `--doi` 可混用 |
-| `--doi DOI[,DOI...]` | 直接按 DOI 下载，逗号分隔多个；先解析成 arnumber 再下载 |
+| `--doi DOI[,DOI...]` | 直接按 DOI 下载，逗号分隔多个；先解析成 arnumber 再下载（Crossref 优先，失败回落 doi.org，带重试） |
+| `--doi-file PATH` | 从文本文件读取 DOI（一行一个，忽略空行与 `#` 注释），折入 `--doi`；大批量列表用 |
+| `--doi-as-arnumber` | 快速通道：直接把 DOI 末段数字当 arnumber，跳过 DOI 解析；猜测 404 时自动回落真实解析 |
 | `--url URL[,URL...]` | 直接按 IEEE 链接下载，逗号分隔多个；自动从链接提取 arnumber |
 | `--out-dir DIR` | PDF 输出目录。`--jsonl` 下载默认落到该 JSONL 所在目录；直连下载默认 `work/papers/` |
+| `--name-by-title` | PDF 命名为 `<arnumber>_<标题>.pdf`（默认仅 `<arnumber>.pdf`） |
 | `--cookies PATH` | Cookie 文件，默认 `config/ieee_cookies.txt` |
 | `--state PATH` | 状态文件，默认放在输入 JSONL 同目录下的 `download_state.jsonl` |
 | `--engine {playwright,httpx}` | 选择下载引擎 |
@@ -264,7 +269,7 @@ Chromium 持久化用户目录由 `src/ieee_tools/cookies.py` 的常量 `USER_DA
 | `--limit N` | 本次最多处理 N 篇，`0` 表示全部 |
 | `--retry-failed` | 只处理状态文件中此前非成功的论文 |
 | `--force` | 即使本地已有有效 PDF 也重新下载 |
-| `--cooldown-seconds N` | 覆盖默认限流冷却时间 |
+| `--cooldown-seconds N` | 覆盖默认限流冷却基础时间（连续限流按次翻倍，上限 90 分钟） |
 | `--max-rate-limits N` | 覆盖默认连续限流熔断次数 |
 
 退出码：`0` 成功；`1` 鉴权失败（Cookie/VPN）；`2` 存在失败项或熔断；`3` 参数/文件错误；`130` 被 Ctrl+C 中断。

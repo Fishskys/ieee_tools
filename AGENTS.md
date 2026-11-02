@@ -176,7 +176,8 @@ lastmod: 2026-10-21T16:00:00+08:00
 - **统一入口**：所有能力通过 `uv run ieee-tools <命令>` 暴露，不在文档或 Skill 中要求用户改源码或记住脚本路径。
 - **退出码契约**：`0` 成功；`1` 鉴权失败（Cookie/VPN）；`2` 有失败项或熔断；`3` 参数或文件错误；`130` 被 Ctrl+C 中断。新增命令须遵循同一套码。
 - **产物路径**：检索结果按查询建子目录 `work/search_results/<查询>/`（空格转下划线、短横保留），内含 `ieee_papers.jsonl` / `ieee_raw.json` / `download_state.jsonl`；PDF 分类——`--jsonl` 下载默认落到该 JSONL 所在目录，`--arnumber`/`--doi`/`--url` 直连默认落到 `work/papers/`（均可用 `--out-dir` 覆盖）；PDF 一律以 **arnumber** 命名。
-- **直连入口**：`download` 支持 `--jsonl`、`--arnumber`、`--doi`、`--url` 四种标识，`--arnumber`/`--doi`/`--url` 均支持逗号分隔多值并可混用、按 arnumber 去重。
+- **直连入口**：`download` 支持 `--jsonl`、`--arnumber`、`--doi`、`--doi-file`、`--doi-as-arnumber`、`--url` 多种标识，`--arnumber`/`--doi`/`--url` 均支持逗号分隔多值并可混用、按 arnumber 去重；`--doi-file` 从文件读 DOI；`--doi-as-arnumber` 免解析快速通道（404 回落）；`--name-by-title` 按标题命名 PDF。
+- **容错契约**：单篇的**非预期异常**（如 DOI 解析时的瞬时 TLS 断连）记为 `status=error` 并继续下一篇，绝不中断整批；DOI 解析两通道（Crossref→doi.org）均带指数退避重试；限流冷却随连续次数翻倍（上限 90 分钟）。`--doi` 续传按历史已解析的 arnumber 判重，避免重下。
 - **凭据**：IEEE API Key 从 `.env` 的 `IEEE_API_KEY` 读取；登录 Cookie 由人工登录导出。Agent 不代填、不猜测、不落盘任何密码或 Cookie 值。
 - **文档同步**：命令/参数/退出码变更须在同一变更集内同步 `README.md`、`CHANGELOG.md` 与 `skills/ieee-xplore/references/cli-reference.md`。
 
