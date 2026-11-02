@@ -234,6 +234,29 @@ def resolve_out_dir(
     return PAPERS_DIR if direct else jsonl_path.parent
 
 
+def safe_filename(text: str, max_len: int = 120) -> str:
+    """Turn a title into a filesystem-safe filename fragment.
+
+    Strips characters that are illegal on common filesystems, collapses
+    whitespace, trims trailing dots/spaces (illegal on Windows), and caps the
+    length. Returns "" for an empty/blank title so callers can fall back to the
+    arnumber alone.
+    """
+    cleaned = re.sub(r'[\\/:*?"<>|\n\r\t]+', " ", text or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = cleaned.rstrip(" .")
+    return cleaned[:max_len].rstrip(" .")
+
+
+def pdf_filename(arnumber: str, title: str, name_by_title: bool) -> str:
+    """<arnumber>.pdf, or '<arnumber>_<safe-title>.pdf' when name_by_title."""
+    if name_by_title and (title or "").strip():
+        safe = safe_filename(title)
+        if safe:
+            return f"{arnumber}_{safe}.pdf"
+    return f"{arnumber}.pdf"
+
+
 def doi_suffix_arnumber(doi: str) -> str | None:
     """Best-effort arnumber from an IEEE DOI's last segment.
 
@@ -1018,6 +1041,7 @@ def run_downloads(
     force: bool,
     cooldown_seconds: float,
     max_consecutive_rate_limits: int,
+    name_by_title: bool = False,
 ) -> int:
     state = load_jsonl_state(state_path)
 
@@ -1031,7 +1055,9 @@ def run_downloads(
         )
 
     for item in items:
-        out_path = out_dir / f"{item.item_key}.pdf"
+        out_path = out_dir / pdf_filename(
+            item.arnumber or item.item_key, item.title, name_by_title
+        )
 
         # DOI mode: a prior successful run recorded the resolved arnumber, so we
         # can (a) skip an already-downloaded <arnumber>.pdf and (b) skip the
@@ -1042,7 +1068,9 @@ def run_downloads(
             prev = state.get(item.item_key)
             if prev and prev.get("arnumber"):
                 item = replace(item, arnumber=str(prev["arnumber"]))
-                out_path = out_dir / f"{prev['arnumber']}.pdf"
+                out_path = out_dir / pdf_filename(
+                    str(prev["arnumber"]), item.title, name_by_title
+                )
 
         if not should_process(
             item.item_key,
@@ -1080,7 +1108,9 @@ def run_downloads(
                     if item.item_key != arnumber:
                         # direct --doi item resolved to its arnumber: name the
                         # PDF and state record by the arnumber.
-                        out_path = out_dir / f"{arnumber}.pdf"
+                        out_path = out_dir / pdf_filename(
+                            arnumber, item.title, name_by_title
+                        )
                         record["item_key"] = arnumber
                     atomic_write_bytes(out_path, body)
                     record.update(
@@ -1281,6 +1311,11 @@ def build_parser() -> argparse.ArgumentParser:
         "when downloading from --jsonl; otherwise work/papers/.",
     )
     parser.add_argument(
+        "--name-by-title",
+        action="store_true",
+        help="Name PDFs '<arnumber>_<title>.pdf' instead of '<arnumber>.pdf'",
+    )
+    parser.add_argument(
         "--cookies", type=Path, default=DEFAULT_COOKIES,
         help="Netscape cookies.txt (default: config/ieee_cookies.txt)",
     )
@@ -1422,6 +1457,7 @@ def main(argv: list[str] | None = None) -> int:
             force=args.force,
             cooldown_seconds=args.cooldown_seconds,
             max_consecutive_rate_limits=args.max_rate_limits,
+            name_by_title=args.name_by_title,
         )
 
 

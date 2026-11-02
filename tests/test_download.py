@@ -397,3 +397,39 @@ def test_read_dois_from_file(tmp_path):
     ]
 
 
+# --------------------------------------------------------------------------
+# --name-by-title
+# --------------------------------------------------------------------------
+
+def test_safe_filename_strips_illegal_chars():
+    assert download.safe_filename('A 2–36 GHz LNA: a/b*c?"d"') == "A 2–36 GHz LNA a b c d"
+    assert download.safe_filename("   ") == ""
+    assert download.safe_filename("ends with dot. ") == "ends with dot"
+
+
+def test_pdf_filename_default_and_by_title():
+    assert download.pdf_filename("123", "Some Title", False) == "123.pdf"
+    assert download.pdf_filename("123", "Some Title", True) == "123_Some Title.pdf"
+    # empty title falls back to arnumber alone even when enabled
+    assert download.pdf_filename("123", "   ", True) == "123.pdf"
+
+
+def test_run_downloads_name_by_title(tmp_path):
+    pdf = b"%PDF-1.4\n" + b"x" * 20000 + b"\n%%EOF\n"
+
+    class _Fake:
+        engine_name = "fake"
+
+        def download(self, it):
+            return it.arnumber, pdf
+
+    item = download.PaperItem("777", "My: Paper/Title", "777", None)
+    rc = download.run_downloads(
+        [item], _Fake(), out_dir=tmp_path, state_path=tmp_path / "s.jsonl",
+        delay=0, limit=0, retry_failed=False, force=False,
+        cooldown_seconds=0, max_consecutive_rate_limits=3, name_by_title=True,
+    )
+    assert rc == download.EXIT_OK
+    assert (tmp_path / "777_My Paper Title.pdf").is_file()
+
+
