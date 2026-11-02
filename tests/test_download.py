@@ -189,7 +189,7 @@ class _FakeDownloader:
         value = self.behavior[item.item_key]
         if isinstance(value, Exception):
             raise value
-        return item.item_key, value
+        return (item.arnumber or item.item_key), value
 
 
 def test_run_downloads_survives_unexpected_exception(tmp_path):
@@ -221,6 +221,42 @@ def test_run_downloads_survives_unexpected_exception(tmp_path):
     assert status_by_key["111"] == "error"
     assert status_by_key["222"] == "success"
     assert rc == download.EXIT_FAILED
+
+
+def test_run_downloads_doi_mode_skips_when_recorded_arnumber_pdf_exists(tmp_path):
+    pdf = b"%PDF-1.4\n" + b"x" * 20000 + b"\n%%EOF\n"
+    (tmp_path / "8888888.pdf").write_bytes(pdf)  # already downloaded previously
+    state = tmp_path / "state.jsonl"
+    _write_state(
+        state,
+        [{
+            "item_key": "doi:10.1109/x.y",
+            "status": "success",
+            "arnumber": "8888888",
+            "doi": "10.1109/x.y",
+        }],
+    )
+
+    class _Boom:
+        engine_name = "boom"
+
+        def download(self, it):
+            raise AssertionError("must not re-download when arnumber PDF exists")
+
+    item = download.PaperItem("doi:10.1109/x.y", "", None, "10.1109/x.y")
+    rc = download.run_downloads(
+        [item],
+        _Boom(),
+        out_dir=tmp_path,
+        state_path=state,
+        delay=0,
+        limit=0,
+        retry_failed=False,
+        force=False,
+        cooldown_seconds=0,
+        max_consecutive_rate_limits=3,
+    )
+    assert rc == download.EXIT_OK
 
 
 # --------------------------------------------------------------------------

@@ -988,6 +988,17 @@ def run_downloads(
     for item in items:
         out_path = out_dir / f"{item.item_key}.pdf"
 
+        # DOI mode: a prior successful run recorded the resolved arnumber, so we
+        # can (a) skip an already-downloaded <arnumber>.pdf and (b) skip the
+        # DOI->arnumber network resolution entirely. Without this, resume judged
+        # `doi:<id>.pdf` (which never exists) as missing and re-downloaded every
+        # item on each run.
+        if item.arnumber is None and item.doi:
+            prev = state.get(item.item_key)
+            if prev and prev.get("arnumber"):
+                item = replace(item, arnumber=str(prev["arnumber"]))
+                out_path = out_dir / f"{prev['arnumber']}.pdf"
+
         if not should_process(
             item.item_key,
             out_path,
