@@ -382,3 +382,18 @@ def test_download_doi_as_arnumber_falls_back_on_404():
     assert body == pdf
 
 
+# --------------------------------------------------------------------------
+# --doi-file
+# --------------------------------------------------------------------------
+
+def test_read_dois_from_file(tmp_path):
+    f = tmp_path / "dois.txt"
+    f.write_text(
+        "# header comment\n10.1109/A.1\n\n  10.1109/B.2  \n# tail\n10.1109/C.3\n",
+        encoding="utf-8",
+    )
+    assert download.read_dois_from_file(f) == [
+        "10.1109/A.1", "10.1109/B.2", "10.1109/C.3",
+    ]
+
+

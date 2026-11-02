@@ -1252,6 +1252,13 @@ def build_parser() -> argparse.ArgumentParser:
         "skips --jsonl",
     )
     parser.add_argument(
+        "--doi-file",
+        type=Path,
+        default=None,
+        help="Read DOIs from a text file (one per line; blank lines and "
+        "# comments ignored). Folded into --doi; use for large lists.",
+    )
+    parser.add_argument(
         "--doi-as-arnumber",
         action="store_true",
         help="Treat each --doi's last numeric segment as the arnumber and skip "
@@ -1327,12 +1334,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def read_dois_from_file(path: Path) -> list[str]:
+    """Read DOIs from a text file, one per line (blank lines and # comments
+    ignored). Lets you pass a large DOI list without risking shell ARG_MAX."""
+    dois: list[str] = []
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        dois.append(line)
+    return dois
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # --doi-file is a convenience that folds into the --doi list.
+    doi_values = list(args.doi or [])
+    if args.doi_file is not None:
+        if not args.doi_file.is_file():
+            parser.error(f"--doi-file not found: {args.doi_file}")
+        doi_values.extend(read_dois_from_file(args.doi_file))
+
     # Direct-identifier mode: --arnumber / --doi / --url bypass the JSONL list.
-    direct = bool(args.arnumber or args.doi or args.url)
+    direct = bool(args.arnumber or doi_values or args.url)
 
     # Validation
     if args.delay < 0:
@@ -1358,7 +1384,7 @@ def main(argv: list[str] | None = None) -> int:
     if direct:
         try:
             items = build_direct_items(
-                args.arnumber, args.doi, args.url, args.doi_as_arnumber
+                args.arnumber, doi_values, args.url, args.doi_as_arnumber
             )
         except ValueError as exc:
             parser.error(str(exc))
