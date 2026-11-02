@@ -327,3 +327,58 @@ def test_resolve_transient_exhausted_raises_downloaderror(monkeypatch):
         probe.resolve_arnumber("10.1109/X.Y")
 
 
+# --------------------------------------------------------------------------
+# doi-as-arnumber fast path (heuristic + 404 fallback)
+# --------------------------------------------------------------------------
+
+def test_doi_suffix_arnumber():
+    assert download.doi_suffix_arnumber("10.1109/TCSI.2020.1234567") == "1234567"
+    assert download.doi_suffix_arnumber("10.1109/tcsi.2016.9876543") == "9876543"
+    assert download.doi_suffix_arnumber("10.1109/ABC") is None  # non-numeric tail
+
+
+def test_build_direct_doi_as_arnumber_uses_suffix():
+    items = download.build_direct_items(
+        None, ["10.1109/TCSI.2020.1234567"], None, doi_as_arnumber=True
+    )
+    assert len(items) == 1
+    assert items[0].arnumber == "1234567"
+    assert items[0].item_key == "1234567"
+    assert items[0].doi_as_arnumber is True
+
+
+def test_build_direct_doi_as_arnumber_rejects_non_numeric():
+    with pytest.raises(ValueError):
+        download.build_direct_items(
+            None, ["10.1109/ABC"], None, doi_as_arnumber=True
+        )
+
+
+def test_download_doi_as_arnumber_falls_back_on_404():
+    """Wrong guessed arnumber -> open_document 404 -> resolve for real -> retry."""
+    pdf = b"%PDF-1.4\n" + b"x" * 20000 + b"\n%%EOF\n"
+
+    class _Probe(download.BaseDownloader):
+        def __init__(self):
+            self.opened = []
+
+        def open_document(self, arnumber):
+            self.opened.append(arnumber)
+            if arnumber == "9876543":  # the wrong guess
+                raise download.NotFoundError("404 guessed arnumber")
+
+        def resolve_arnumber(self, doi):
+            return "9999999"  # the real arnumber
+
+        def http_get_pdf(self, arnumber):
+            return pdf, "application/pdf", None
+
+    item = download.PaperItem(
+        "9876543", "", "9876543", "10.1109/tcsi.2016.9876543",
+        doi_as_arnumber=True,
+    )
+    arn, body = _Probe().download(item)
+    assert arn == "9999999"
+    assert body == pdf
+
+

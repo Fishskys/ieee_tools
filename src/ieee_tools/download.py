@@ -150,6 +150,7 @@ class PaperItem:
     title: str
     arnumber: str | None
     doi: str | None
+    doi_as_arnumber: bool = False
 
 
 # ============================================================
@@ -233,10 +234,24 @@ def resolve_out_dir(
     return PAPERS_DIR if direct else jsonl_path.parent
 
 
+def doi_suffix_arnumber(doi: str) -> str | None:
+    """Best-effort arnumber from an IEEE DOI's last segment.
+
+    IEEE DOIs overwhelmingly end with the arnumber, e.g.
+    ``10.1109/TCSI.2020.1234567`` -> ``1234567``. This is only a heuristic: a
+    few DOIs do not follow it (e.g. ``10.1109/tcsi.2016.9876543`` whose real
+    arnumber is 9999999), which is why callers using it must fall back to a
+    real resolve on 404.
+    """
+    tail = re.split(r"[./]", (doi or "").strip().rstrip("/"))[-1]
+    return tail if tail.isdigit() else None
+
+
 def build_direct_items(
     arnumbers: list[str] | None,
     dois: list[str] | None,
     urls: list[str] | None = None,
+    doi_as_arnumber: bool = False,
 ) -> list[PaperItem]:
     """Build PaperItems from --arnumber / --doi / --url flags (no JSONL file).
 
@@ -276,6 +291,20 @@ def build_direct_items(
         _add_arnumber(arn)
 
     for doi in _expand(dois):
+        if doi_as_arnumber:
+            arn = doi_suffix_arnumber(doi)
+            if not arn:
+                raise ValueError(
+                    f"--doi-as-arnumber: DOI has no numeric last segment: {doi!r}"
+                )
+            if arn in seen:
+                continue
+            seen.add(arn)
+            items.append(
+                PaperItem(item_key=arn, title="", arnumber=arn,
+                          doi=doi, doi_as_arnumber=True)
+            )
+            continue
         key = f"doi:{doi.lower()}"
         if key in seen:
             continue
@@ -709,7 +738,23 @@ class BaseDownloader:
         if item.item_key != arnumber:
             item = replace(item, item_key=arnumber)
 
-        self.open_document(arnumber)
+        try:
+            self.open_document(arnumber)
+        except NotFoundError:
+            # --doi-as-arnumber assumed the DOI's last segment IS the arnumber
+            # (skipping network resolution). If that guess is wrong the document
+            # 404s, so fall back to a real resolve and retry once.
+            if item.doi_as_arnumber and item.doi:
+                print(
+                    "  arnumber guess failed (404); resolving DOI for real ...",
+                    file=sys.stderr,
+                )
+                arnumber = self.resolve_arnumber(item.doi)
+                print(f"  DOI resolved -> arnumber {arnumber}")
+                item = replace(item, item_key=arnumber, doi_as_arnumber=False)
+                self.open_document(arnumber)
+            else:
+                raise
 
         last_error: RetriableDownloadError | None = None
         for attempt in range(HTTP_RETRY_COUNT + 1):
@@ -1207,6 +1252,13 @@ def build_parser() -> argparse.ArgumentParser:
         "skips --jsonl",
     )
     parser.add_argument(
+        "--doi-as-arnumber",
+        action="store_true",
+        help="Treat each --doi's last numeric segment as the arnumber and skip "
+        "DOI resolution (fallback: real resolve on 404). Fast path when "
+        "doi.org is flaky.",
+    )
+    parser.add_argument(
         "--url",
         action="append",
         default=None,
@@ -1305,7 +1357,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if direct:
         try:
-            items = build_direct_items(args.arnumber, args.doi, args.url)
+            items = build_direct_items(
+                args.arnumber, args.doi, args.url, args.doi_as_arnumber
+            )
         except ValueError as exc:
             parser.error(str(exc))
     else:
