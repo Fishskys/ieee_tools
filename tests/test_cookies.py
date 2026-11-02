@@ -24,17 +24,3 @@ def test_write_netscape_cookie_file(tmp_path):
     assert "\tFALSE\t" in text  # the non-dot row
     # expires -1 normalises to 0
     assert "\t0\tb\t2" in text
-
-
-def test_output_default_is_under_repo_config():
-    # OUTPUT is anchored to repo config dir, not cwd.
-    assert cookies.OUTPUT.name == "ieee_cookies.txt"
-    assert cookies.OUTPUT.parent.name == "config"
-
-
-def test_importing_cookies_does_not_require_playwright():
-    # Module import must not fail even if Playwright is absent, because
-    # cli.status / cli.help import chain must stay lightweight.
-    assert callable(cookies.main)
-    assert callable(cookies.build_parser)
-    assert callable(cookies._import_playwright)

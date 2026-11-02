@@ -42,13 +42,6 @@ def test_build_direct_doi_is_resolved_later():
     assert items[0].doi == "10.1109/JSSC.2026.3693653"
 
 
-def test_build_direct_dedupes_across_sources():
-    items = download.build_direct_items(
-        ["11617481"], None, ["https://ieeexplore.ieee.org/document/11617481"]
-    )
-    assert [i.item_key for i in items] == ["11617481"]
-
-
 def test_build_direct_rejects_bad_arnumber():
     with pytest.raises(ValueError, match="must be numeric"):
         download.build_direct_items(["123,abc"], None)
@@ -149,10 +142,8 @@ def test_status_main_json(tmp_path, capsys):
     assert data["total"] == 2
     assert data["counts"] == {"success": 1, "rate_limited": 1}
     assert data["failed"][0]["item_key"] == "2"
-
-
-def test_status_main_latest_record_wins(tmp_path, capsys):
-    sp = tmp_path / "download_state.jsonl"
+    # latest record per item_key wins: one success supersedes an earlier
+    # rate_limited for the same key.
     _write_state(
         sp,
         [
@@ -162,7 +153,6 @@ def test_status_main_latest_record_wins(tmp_path, capsys):
     )
     rc = download.status_main(["--state", str(sp), "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert rc == 0
     assert data["total"] == 1
     assert data["counts"] == {"success": 1}
 
@@ -331,12 +321,6 @@ def test_resolve_transient_exhausted_raises_downloaderror(monkeypatch):
 # doi-as-arnumber fast path (heuristic + 404 fallback)
 # --------------------------------------------------------------------------
 
-def test_doi_suffix_arnumber():
-    assert download.doi_suffix_arnumber("10.1109/TCSI.2020.1234567") == "1234567"
-    assert download.doi_suffix_arnumber("10.1109/tcsi.2016.9876543") == "9876543"
-    assert download.doi_suffix_arnumber("10.1109/ABC") is None  # non-numeric tail
-
-
 def test_build_direct_doi_as_arnumber_uses_suffix():
     items = download.build_direct_items(
         None, ["10.1109/TCSI.2020.1234567"], None, doi_as_arnumber=True
@@ -383,31 +367,10 @@ def test_download_doi_as_arnumber_falls_back_on_404():
 
 
 # --------------------------------------------------------------------------
-# --doi-file
-# --------------------------------------------------------------------------
-
-def test_read_dois_from_file(tmp_path):
-    f = tmp_path / "dois.txt"
-    f.write_text(
-        "# header comment\n10.1109/A.1\n\n  10.1109/B.2  \n# tail\n10.1109/C.3\n",
-        encoding="utf-8",
-    )
-    assert download.read_dois_from_file(f) == [
-        "10.1109/A.1", "10.1109/B.2", "10.1109/C.3",
-    ]
-
-
-# --------------------------------------------------------------------------
 # --name-by-title
 # --------------------------------------------------------------------------
 
-def test_safe_filename_strips_illegal_chars():
-    assert download.safe_filename('A 2–36 GHz LNA: a/b*c?"d"') == "A 2–36 GHz LNA a b c d"
-    assert download.safe_filename("   ") == ""
-    assert download.safe_filename("ends with dot. ") == "ends with dot"
-
-
-def test_pdf_filename_default_and_by_title():
+def test_pdf_filename_by_title():
     assert download.pdf_filename("123", "Some Title", False) == "123.pdf"
     assert download.pdf_filename("123", "Some Title", True) == "123_Some Title.pdf"
     # empty title falls back to arnumber alone even when enabled

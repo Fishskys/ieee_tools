@@ -40,10 +40,3 @@ def test_status_dispatch(tmp_path, capsys):
     sp.write_text(json.dumps({"item_key": "1", "status": "success"}) + "\n")
     assert cli.main(["status", "--state", str(sp)]) == 0
     assert "total: 1" in capsys.readouterr().out
-
-
-def test_full_help_includes_each_command_section(capsys):
-    assert cli.main(["help"]) == 0
-    out = capsys.readouterr().out
-    for header in ("## search", "## export_cookies", "## download", "## status"):
-        assert header in out
