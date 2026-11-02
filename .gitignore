@@ -70,5 +70,6 @@ yarn-debug.log*
 .aider*
 .codex/
 
-# init_your_proj 增量配置
+# iyp 增量配置（本机，不入库；iyp 0.2.0 起配置名为 iyp.toml）
+iyp.toml
 init_your_proj.toml
